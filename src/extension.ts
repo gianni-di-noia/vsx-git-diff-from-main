@@ -32,8 +32,9 @@ export function activate(context: vscode.ExtensionContext) {
   // Register open file command BEFORE creating tree view
   const openFileCommand = vscode.commands.registerCommand(
     'gitDiff.openFile',
-    async (fileUri: vscode.Uri) => {
+    async (target: vscode.Uri | { resourceUri: vscode.Uri }) => {
       try {
+        const fileUri = target instanceof vscode.Uri ? target : target.resourceUri;
         const document = await vscode.workspace.openTextDocument(fileUri);
         await vscode.window.showTextDocument(document);
       } catch (error) {

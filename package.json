@@ -42,7 +42,8 @@
       },
       {
         "command": "gitDiff.openFile",
-        "title": "Open File"
+        "title": "Open File",
+        "icon": "$(go-to-file)"
       },
       {
         "command": "gitDiff.openDiff",
@@ -75,7 +76,7 @@
       ],
       "view/item/context": [
         {
-          "command": "gitDiff.openDiff",
+          "command": "gitDiff.openFile",
           "when": "view == gitDiffSidebar && viewItem =~ /^fileItem-/",
           "group": "inline"
         }

@@ -25,21 +25,6 @@ export class FileItem extends vscode.TreeItem {
 }
 
 /**
- * Represents a group header in the tree (e.g., "Committed Changes")
- */
-export class GroupItem extends vscode.TreeItem {
-  constructor(
-    public readonly label: string,
-    public readonly collapsibleState: vscode.TreeItemCollapsibleState,
-    public readonly id: string
-  ) {
-    super(label, collapsibleState);
-    this.id = id;
-    this.contextValue = 'group';
-  }
-}
-
-/**
  * File status from git
  */
 export enum FileStatus {

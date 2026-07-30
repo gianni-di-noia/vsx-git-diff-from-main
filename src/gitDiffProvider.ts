@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitService } from './gitService';
-import { FileItem, GroupItem } from './types';
+import { FileItem } from './types';
 import { Logger } from './logger';
 
 /**
@@ -65,21 +65,9 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     try {
       if (!element) {
-        // Root level - show groups
+        // Root level - show the flat file list directly (no group node)
         Logger.log('[GitDiff] Getting root items');
         return this.getRootItems();
-      }
-
-      // If element is a group, show files in that group
-      if (element instanceof GroupItem) {
-        Logger.log(`[GitDiff] Getting children for group: ${element.label}`);
-        if (element.label === 'All Changes') {
-          return this.getAllChangesItems();
-        } else if (element.label === 'Committed Changes') {
-          return this.getCommittedChangesItems();
-        } else if (element.label === 'Uncommitted Changes') {
-          return this.getUncommittedChangesItems();
-        }
       }
 
       Logger.log(`[GitDiff] No children for element: ${element.label}`);
@@ -91,7 +79,7 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   }
 
   /**
-   * Get root level items (groups)
+   * Get root level items (files with all changes, committed + uncommitted combined)
    */
   private async getRootItems(): Promise<vscode.TreeItem[]> {
     Logger.log('[GitDiff] Getting root items, checking if git repo...');
@@ -103,39 +91,6 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
       return [item];
     }
 
-    Logger.log(`[GitDiff] Creating groups with base branch: ${this.baseBranch}`);
-
-    const allChangesGroup = new GroupItem(
-      'All Changes',
-      vscode.TreeItemCollapsibleState.Expanded,
-      'all-changes'
-    );
-    allChangesGroup.description = `from ${this.baseBranch}`;
-    allChangesGroup.iconPath = new vscode.ThemeIcon('files');
-
-    const committedGroup = new GroupItem(
-      'Committed Changes',
-      vscode.TreeItemCollapsibleState.Collapsed,
-      'committed-changes'
-    );
-    committedGroup.description = `from ${this.baseBranch}`;
-    committedGroup.iconPath = new vscode.ThemeIcon('git-commit');
-
-    const uncommittedGroup = new GroupItem(
-      'Uncommitted Changes',
-      vscode.TreeItemCollapsibleState.Collapsed,
-      'uncommitted-changes'
-    );
-    uncommittedGroup.iconPath = new vscode.ThemeIcon('git-modified');
-
-    Logger.log('[GitDiff] Created 3 groups');
-    return [allChangesGroup, committedGroup, uncommittedGroup];
-  }
-
-  /**
-   * Get all changes (committed + uncommitted combined)
-   */
-  private async getAllChangesItems(): Promise<vscode.TreeItem[]> {
     Logger.log(`[GitDiff] Getting all changes from ${this.baseBranch}`);
     const committedFiles = await this.gitService.getCommittedChanges(this.baseBranch);
     Logger.log(`[GitDiff] Committed files: ${committedFiles.length}`);
@@ -146,26 +101,6 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     const allFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
     Logger.log(`[GitDiff] Total all changes: ${allFiles.length}`);
     return allFiles.map(file => this.createFileItem(file, 'all'));
-  }
-
-  /**
-   * Get committed changes file items
-   */
-  private async getCommittedChangesItems(): Promise<vscode.TreeItem[]> {
-    Logger.log(`[GitDiff] Getting committed changes from ${this.baseBranch}`);
-    const files = await this.gitService.getCommittedChanges(this.baseBranch);
-    Logger.log(`[GitDiff] Found ${files.length} committed files`);
-    return files.map(file => this.createFileItem(file, 'committed'));
-  }
-
-  /**
-   * Get uncommitted changes file items
-   */
-  private async getUncommittedChangesItems(): Promise<vscode.TreeItem[]> {
-    Logger.log('[GitDiff] Getting uncommitted changes');
-    const files = await this.gitService.getUncommittedChanges();
-    Logger.log(`[GitDiff] Found ${files.length} uncommitted files`);
-    return files.map(file => this.createFileItem(file, 'uncommitted'));
   }
 
   /**
@@ -182,9 +117,9 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
       section,
       this.baseBranch,
       {
-        command: 'gitDiff.openFile',
-        title: 'Open File',
-        arguments: [fileUri]
+        command: 'gitDiff.openDiff',
+        title: 'Open Diff',
+        arguments: [{ resourceUri: fileUri, section, baseBranch: this.baseBranch }]
       }
     );
 
