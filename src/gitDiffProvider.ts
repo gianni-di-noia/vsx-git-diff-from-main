@@ -1,8 +1,18 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { GitService } from './gitService';
-import { FileItem } from './types';
+import { FileItem, FolderItem } from './types';
 import { Logger } from './logger';
+
+/**
+ * Internal node used to build the folder/file tree from a flat list of paths
+ */
+interface TreeNode {
+  name: string;
+  fullPath: string;
+  filePath?: string;
+  children: Map<string, TreeNode>;
+}
 
 /**
  * Tree data provider for git diff sidebar
@@ -16,6 +26,9 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   private gitService: GitService;
   private workspaceRoot: string;
   private baseBranch: string = 'main';
+
+  // Children of each folder, keyed by the folder's relative path ('' = root); rebuilt on each root query
+  private folderChildren: Map<string, vscode.TreeItem[]> = new Map();
 
   constructor(private context: vscode.ExtensionContext) {
     const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -65,9 +78,13 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     try {
       if (!element) {
-        // Root level - show the flat file list directly (no group node)
+        // Root level - build the folder/file tree
         Logger.log('[GitDiff] Getting root items');
         return this.getRootItems();
+      }
+
+      if (element instanceof FolderItem) {
+        return this.folderChildren.get(element.fullPath) ?? [];
       }
 
       Logger.log(`[GitDiff] No children for element: ${element.label}`);
@@ -79,7 +96,7 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   }
 
   /**
-   * Get root level items (files with all changes, committed + uncommitted combined)
+   * Get root level items and rebuild the folder tree cache
    */
   private async getRootItems(): Promise<vscode.TreeItem[]> {
     Logger.log('[GitDiff] Getting root items, checking if git repo...');
@@ -100,13 +117,76 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     // Combine and deduplicate
     const allFiles = [...new Set([...committedFiles, ...uncommittedFiles])];
     Logger.log(`[GitDiff] Total all changes: ${allFiles.length}`);
-    return allFiles.map(file => this.createFileItem(file, 'all'));
+
+    return this.buildFolderTree(allFiles);
+  }
+
+  /**
+   * Build a folder/file tree from a flat list of relative paths, caching each
+   * folder's children so getChildren() can look them up by path.
+   */
+  private buildFolderTree(filePaths: string[]): vscode.TreeItem[] {
+    this.folderChildren.clear();
+
+    const root: TreeNode = { name: '', fullPath: '', children: new Map() };
+
+    for (const filePath of filePaths) {
+      const parts = filePath.split('/');
+      let current = root;
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        const fullPath = current.fullPath ? `${current.fullPath}/${part}` : part;
+        let child = current.children.get(part);
+        if (!child) {
+          child = { name: part, fullPath, children: new Map() };
+          current.children.set(part, child);
+        }
+        current = child;
+      }
+
+      const fileName = parts[parts.length - 1];
+      current.children.set(`\0file:${fileName}`, {
+        name: fileName,
+        fullPath: filePath,
+        filePath,
+        children: new Map()
+      });
+    }
+
+    return this.convertNodeChildren(root);
+  }
+
+  /**
+   * Convert a TreeNode's children to sorted tree items (folders first, then files),
+   * caching the result so it can be looked up later by folder path.
+   */
+  private convertNodeChildren(node: TreeNode): vscode.TreeItem[] {
+    const folders: FolderItem[] = [];
+    const files: FileItem[] = [];
+
+    for (const child of node.children.values()) {
+      if (child.filePath) {
+        files.push(this.createFileItem(child.filePath));
+      } else {
+        const folderItem = new FolderItem(child.name, child.fullPath);
+        this.folderChildren.set(child.fullPath, this.convertNodeChildren(child));
+        folders.push(folderItem);
+      }
+    }
+
+    folders.sort((a, b) => a.label.localeCompare(b.label));
+    files.sort((a, b) => a.label.localeCompare(b.label));
+
+    const items = [...folders, ...files];
+    this.folderChildren.set(node.fullPath, items);
+    return items;
   }
 
   /**
    * Create a file tree item
    */
-  private createFileItem(filePath: string, section: 'all' | 'committed' | 'uncommitted'): FileItem {
+  private createFileItem(filePath: string): FileItem {
     const fileName = path.basename(filePath);
     const fileUri = vscode.Uri.file(path.join(this.workspaceRoot, filePath));
 
@@ -114,21 +194,15 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
       fileName,
       fileUri,
       vscode.TreeItemCollapsibleState.None,
-      section,
+      'all',
       this.baseBranch,
       {
         command: 'gitDiff.openDiff',
         title: 'Open Diff',
-        arguments: [{ resourceUri: fileUri, section, baseBranch: this.baseBranch }]
+        arguments: [{ resourceUri: fileUri, section: 'all', baseBranch: this.baseBranch }]
       }
     );
 
-    // Set description to show relative path
-    if (filePath.includes('/')) {
-      fileItem.description = path.dirname(filePath);
-    }
-
-    // Set icon based on file type
     fileItem.iconPath = vscode.ThemeIcon.File;
 
     return fileItem;

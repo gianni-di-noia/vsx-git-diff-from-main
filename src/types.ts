@@ -25,6 +25,21 @@ export class FileItem extends vscode.TreeItem {
 }
 
 /**
+ * Represents a folder node in the tree, grouping files by directory
+ */
+export class FolderItem extends vscode.TreeItem {
+  constructor(
+    public readonly label: string,
+    public readonly fullPath: string
+  ) {
+    super(label, vscode.TreeItemCollapsibleState.Expanded);
+    this.contextValue = 'folder';
+    this.iconPath = vscode.ThemeIcon.Folder;
+    this.tooltip = fullPath;
+  }
+}
+
+/**
  * File status from git
  */
 export enum FileStatus {
