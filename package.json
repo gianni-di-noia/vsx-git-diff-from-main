@@ -41,6 +41,11 @@
         "icon": "$(git-branch)"
       },
       {
+        "command": "gitDiff.selectRepository",
+        "title": "Select Repository",
+        "icon": "$(repo)"
+      },
+      {
         "command": "gitDiff.openFile",
         "title": "Open File",
         "icon": "$(go-to-file)"
@@ -70,6 +75,11 @@
         },
         {
           "command": "gitDiff.selectBaseBranch",
+          "when": "view == gitDiffSidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "gitDiff.selectRepository",
           "when": "view == gitDiffSidebar",
           "group": "navigation"
         }

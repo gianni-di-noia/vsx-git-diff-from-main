@@ -3,6 +3,9 @@ import * as path from 'path';
 import { GitService } from './gitService';
 import { FileItem, FolderItem } from './types';
 import { Logger } from './logger';
+import { getBuiltinGitApi, GitApiRepository } from './gitApi';
+
+const SELECTED_REPO_KEY = 'gitDiff.selectedRepo';
 
 /**
  * Internal node used to build the folder/file tree from a flat list of paths
@@ -23,6 +26,9 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> =
     this._onDidChangeTreeData.event;
 
+  private _onDidChangeRepo: vscode.EventEmitter<string> = new vscode.EventEmitter<string>();
+  readonly onDidChangeRepo: vscode.Event<string> = this._onDidChangeRepo.event;
+
   private gitService: GitService;
   private workspaceRoot: string;
   private baseBranch: string = 'main';
@@ -37,9 +43,7 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     }
     this.workspaceRoot = workspaceFolders[0].uri.fsPath;
     this.gitService = new GitService(this.workspaceRoot);
-
-    // Restore last selected base branch from workspace state
-    this.baseBranch = context.workspaceState.get('gitDiff.baseBranch', 'main');
+    this.baseBranch = this.loadBaseBranch(this.workspaceRoot);
   }
 
   /**
@@ -50,11 +54,11 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
   }
 
   /**
-   * Set the base branch for comparison
+   * Set the base branch for comparison (scoped to the currently active repo)
    */
   async setBaseBranch(branch: string): Promise<void> {
     this.baseBranch = branch;
-    await this.context.workspaceState.update('gitDiff.baseBranch', branch);
+    await this.context.workspaceState.update(this.baseBranchKey(this.workspaceRoot), branch);
     this.refresh();
   }
 
@@ -63,6 +67,82 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
    */
   getBaseBranch(): string {
     return this.baseBranch;
+  }
+
+  /**
+   * Get the root of the repository currently displayed
+   */
+  getCurrentRepoRoot(): string {
+    return this.workspaceRoot;
+  }
+
+  /**
+   * Get the GitService for the repository currently displayed
+   */
+  getGitService(): GitService {
+    return this.gitService;
+  }
+
+  /**
+   * List every git repository VS Code has discovered in this workspace
+   * (including nested repos in a multi-repo folder)
+   */
+  async listRepositories(): Promise<GitApiRepository[]> {
+    const gitApi = await getBuiltinGitApi();
+    return gitApi?.repositories ?? [];
+  }
+
+  /**
+   * Manually pin a repository as the one to display, overriding auto-detection
+   */
+  async selectRepository(repoRoot: string): Promise<void> {
+    await this.context.workspaceState.update(SELECTED_REPO_KEY, repoRoot);
+    await this.syncActiveRepo();
+    this.refresh();
+  }
+
+  private baseBranchKey(repoRoot: string): string {
+    return `gitDiff.baseBranch:${repoRoot}`;
+  }
+
+  private loadBaseBranch(repoRoot: string): string {
+    return this.context.workspaceState.get(this.baseBranchKey(repoRoot), 'main');
+  }
+
+  /**
+   * Work out which repository should be displayed and switch to it if needed:
+   * 1. A repo the user explicitly pinned via `selectRepository`
+   * 2. The repo containing the file open in the active editor
+   * 3. The first repo VS Code discovered in the workspace
+   * Falls back to the first workspace folder when the git extension/API is unavailable.
+   */
+  async syncActiveRepo(): Promise<boolean> {
+    const gitApi = await getBuiltinGitApi();
+    if (!gitApi || gitApi.repositories.length === 0) {
+      return false;
+    }
+
+    const pinned = this.context.workspaceState.get<string>(SELECTED_REPO_KEY);
+    let newRoot: string | undefined;
+
+    if (pinned && gitApi.repositories.some(r => r.rootUri.fsPath === pinned)) {
+      newRoot = pinned;
+    } else {
+      const activeUri = vscode.window.activeTextEditor?.document.uri;
+      const activeRepo = activeUri ? gitApi.getRepository(activeUri) : null;
+      newRoot = activeRepo?.rootUri.fsPath ?? gitApi.repositories[0].rootUri.fsPath;
+    }
+
+    if (newRoot === this.workspaceRoot) {
+      return false;
+    }
+
+    Logger.log(`[GitDiff] Switching active repository to ${newRoot}`);
+    this.workspaceRoot = newRoot;
+    this.gitService.setRoot(newRoot);
+    this.baseBranch = this.loadBaseBranch(newRoot);
+    this._onDidChangeRepo.fire(newRoot);
+    return true;
   }
 
   /**
@@ -99,6 +179,8 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
    * Get root level items and rebuild the folder tree cache
    */
   private async getRootItems(): Promise<vscode.TreeItem[]> {
+    await this.syncActiveRepo();
+
     Logger.log('[GitDiff] Getting root items, checking if git repo...');
     const isGitRepo = await this.gitService.isGitRepository();
     if (!isGitRepo) {

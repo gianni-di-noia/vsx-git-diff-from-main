@@ -3,7 +3,7 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { GitDiffProvider } from './gitDiffProvider';
-import { GitService } from './gitService';
+import { getBuiltinGitApi } from './gitApi';
 import { Logger } from './logger';
 
 const execAsync = promisify(exec);
@@ -24,10 +24,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showWarningMessage('Git Diff Sidebar: No workspace folder found');
     return;
   }
-
-  const workspaceRoot = workspaceFolders[0].uri.fsPath;
-  Logger.log(`Workspace root: ${workspaceRoot}`);
-  const gitService = new GitService(workspaceRoot);
 
   // Register open file command BEFORE creating tree view
   const openFileCommand = vscode.commands.registerCommand(
@@ -65,6 +61,14 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(treeView);
   Logger.log('Tree view registered successfully');
 
+  // Reflect the currently displayed repository in the view title
+  treeView.description = path.basename(gitDiffProvider.getCurrentRepoRoot());
+  context.subscriptions.push(
+    gitDiffProvider.onDidChangeRepo(repoRoot => {
+      treeView.description = path.basename(repoRoot);
+    })
+  );
+
   // Register a content provider for git file contents
   const gitContentProvider = new (class implements vscode.TextDocumentContentProvider {
     async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
@@ -72,7 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
       const { relativePath, ref } = params;
       try {
         const { stdout } = await execAsync(`git show ${ref}:${relativePath}`, {
-          cwd: workspaceRoot
+          cwd: gitDiffProvider.getCurrentRepoRoot()
         });
         return stdout;
       } catch (error) {
@@ -107,15 +111,16 @@ export function activate(context: vscode.ExtensionContext) {
           ?? 'all';
         const baseBranch = fileItem.baseBranch ?? gitDiffProvider.getBaseBranch();
         const absolutePath = fileUri.fsPath;
+        const repoRoot = gitDiffProvider.getCurrentRepoRoot();
 
-        // Get relative path from workspace root
-        const relativePath = path.relative(workspaceRoot, absolutePath).split(path.sep).join('/');
+        // Get relative path from the active repo's root
+        const relativePath = path.relative(repoRoot, absolutePath).split(path.sep).join('/');
 
         let ref: string;
         let title: string;
 
         if (section === 'all' || section === 'committed') {
-          const mergeBase = await gitService.getMergeBase(baseBranch);
+          const mergeBase = await gitDiffProvider.getGitService().getMergeBase(baseBranch);
           ref = mergeBase;
           title = `${path.basename(absolutePath)} (${baseBranch} ↔ Working Tree)`;
         } else {
@@ -162,15 +167,15 @@ export function activate(context: vscode.ExtensionContext) {
 
           if (filterQuery && filterQuery.length > 0) {
             // When filtering, show filtered results only
-            const filtered = await gitService.filterBranches(filterQuery, 10);
+            const filtered = await gitDiffProvider.getGitService().filterBranches(filterQuery, 10);
             items.push(...filtered.map(b => ({ label: b })));
           } else {
             // Show git-spice stack branches (prefixed with emoji) + recent branches
-            const isInStack = await gitService.isInGitSpiceStack();
+            const isInStack = await gitDiffProvider.getGitService().isInGitSpiceStack();
             const stackBranchSet = new Set<string>();
 
             if (isInStack) {
-              const stackBranches = await gitService.getGitSpiceParentBranches();
+              const stackBranches = await gitDiffProvider.getGitService().getGitSpiceParentBranches();
               for (const b of stackBranches) {
                 stackBranchSet.add(b);
                 items.push({ label: `🥞 ${b}`, description: 'git-spice stack' });
@@ -178,7 +183,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
 
             // Recent branches (skip first one which is current branch, and skip stack branches)
-            const recentBranches = await gitService.getRecentBranches(11);
+            const recentBranches = await gitDiffProvider.getGitService().getRecentBranches(11);
             const filteredRecent = recentBranches
               .slice(1) // Skip first (current branch)
               .filter(b => !stackBranchSet.has(b))
@@ -236,6 +241,55 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
   context.subscriptions.push(selectBaseBranchCommand);
+
+  // Register select repository command (multi-repo workspaces)
+  const selectRepositoryCommand = vscode.commands.registerCommand(
+    'gitDiff.selectRepository',
+    async () => {
+      try {
+        const repositories = await gitDiffProvider.listRepositories();
+        if (repositories.length === 0) {
+          vscode.window.showInformationMessage('No git repositories found in this workspace');
+          return;
+        }
+
+        const currentRoot = gitDiffProvider.getCurrentRepoRoot();
+        const items = repositories.map(repo => ({
+          label: path.basename(repo.rootUri.fsPath),
+          description: repo.rootUri.fsPath === currentRoot ? `${repo.rootUri.fsPath} (current)` : repo.rootUri.fsPath,
+          root: repo.rootUri.fsPath
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select repository to display'
+        });
+
+        if (selected && selected.root !== currentRoot) {
+          await gitDiffProvider.selectRepository(selected.root);
+          vscode.window.showInformationMessage(`Showing changes for: ${path.basename(selected.root)}`);
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to select repository: ${error}`);
+      }
+    }
+  );
+  context.subscriptions.push(selectRepositoryCommand);
+
+  // Follow the active editor's repository (auto-switch in multi-repo workspaces)
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      gitDiffProvider.refresh();
+    })
+  );
+
+  // Refresh when VS Code discovers or removes a repository (e.g. multi-repo folder)
+  getBuiltinGitApi().then(gitApi => {
+    if (!gitApi) {
+      return;
+    }
+    context.subscriptions.push(gitApi.onDidOpenRepository(() => gitDiffProvider.refresh()));
+    context.subscriptions.push(gitApi.onDidCloseRepository(() => gitDiffProvider.refresh()));
+  });
 
   // Debounced refresh to prevent infinite loops from file watcher cascades
   let refreshTimeout: ReturnType<typeof setTimeout> | undefined;

@@ -18,6 +18,18 @@ export class GitService {
   }
 
   /**
+   * Point this service at a different repository root (e.g. when the user
+   * switches repos in a multi-repo workspace)
+   */
+  setRoot(workspaceRoot: string): void {
+    this.workspaceRoot = workspaceRoot;
+  }
+
+  getRoot(): string {
+    return this.workspaceRoot;
+  }
+
+  /**
    * Get git-spice executable path from settings (expands ~ to home directory)
    */
   private getGitSpiceExecutable(): string {
