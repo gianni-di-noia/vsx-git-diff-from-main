@@ -6,8 +6,15 @@ import { Logger } from './logger';
  * (The full type comes from the `vscode.git` extension's `git.d.ts`, which we
  * don't depend on directly.)
  */
+export interface GitApiRepositoryUIState {
+  /** True if this is the repository currently selected in the Source Control "Repositories" view */
+  readonly selected: boolean;
+  readonly onDidChange: vscode.Event<void>;
+}
+
 export interface GitApiRepository {
   rootUri: vscode.Uri;
+  readonly ui: GitApiRepositoryUIState;
 }
 
 export interface GitApi {

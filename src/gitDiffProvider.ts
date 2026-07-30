@@ -109,11 +109,17 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     return this.context.workspaceState.get(this.baseBranchKey(repoRoot), 'main');
   }
 
+  // Root of the repository VS Code last reported as selected in the "Repositories" view,
+  // used to detect when the user changes the selection there (so we can drop our own pin)
+  private lastObservedSelectedRoot: string | undefined;
+
   /**
    * Work out which repository should be displayed and switch to it if needed:
-   * 1. A repo the user explicitly pinned via `selectRepository`
-   * 2. The repo containing the file open in the active editor
-   * 3. The first repo VS Code discovered in the workspace
+   * 1. The repo currently selected in VS Code's Source Control "Repositories" view
+   * 2. A repo the user explicitly pinned via `selectRepository` (only while VS Code's
+   *    own selection hasn't moved elsewhere since the pin was set)
+   * 3. The repo containing the file open in the active editor
+   * 4. The first repo VS Code discovered in the workspace
    * Falls back to the first workspace folder when the git extension/API is unavailable.
    */
   async syncActiveRepo(): Promise<boolean> {
@@ -122,11 +128,23 @@ export class GitDiffProvider implements vscode.TreeDataProvider<vscode.TreeItem>
       return false;
     }
 
-    const pinned = this.context.workspaceState.get<string>(SELECTED_REPO_KEY);
-    let newRoot: string | undefined;
+    const selectedRepo = gitApi.repositories.find(r => r.ui.selected);
+    const selectedRoot = selectedRepo?.rootUri.fsPath;
 
+    let pinned = this.context.workspaceState.get<string>(SELECTED_REPO_KEY);
+    if (pinned && this.lastObservedSelectedRoot !== undefined && selectedRoot !== this.lastObservedSelectedRoot) {
+      // VS Code's own repository selection moved since we pinned - defer to it
+      Logger.log('[GitDiff] Repositories view selection changed, clearing manual pin');
+      await this.context.workspaceState.update(SELECTED_REPO_KEY, undefined);
+      pinned = undefined;
+    }
+    this.lastObservedSelectedRoot = selectedRoot;
+
+    let newRoot: string | undefined;
     if (pinned && gitApi.repositories.some(r => r.rootUri.fsPath === pinned)) {
       newRoot = pinned;
+    } else if (selectedRoot) {
+      newRoot = selectedRoot;
     } else {
       const activeUri = vscode.window.activeTextEditor?.document.uri;
       const activeRepo = activeUri ? gitApi.getRepository(activeUri) : null;

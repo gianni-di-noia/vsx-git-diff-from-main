@@ -282,12 +282,22 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Refresh when VS Code discovers or removes a repository (e.g. multi-repo folder)
+  // Refresh when VS Code discovers/removes a repository, or when the user picks a
+  // different one in the Source Control "Repositories" view
   getBuiltinGitApi().then(gitApi => {
     if (!gitApi) {
       return;
     }
-    context.subscriptions.push(gitApi.onDidOpenRepository(() => gitDiffProvider.refresh()));
+
+    const followSelection = (repo: { ui: { onDidChange: vscode.Event<void> } }) => {
+      context.subscriptions.push(repo.ui.onDidChange(() => gitDiffProvider.refresh()));
+    };
+
+    gitApi.repositories.forEach(followSelection);
+    context.subscriptions.push(gitApi.onDidOpenRepository(repo => {
+      followSelection(repo);
+      gitDiffProvider.refresh();
+    }));
     context.subscriptions.push(gitApi.onDidCloseRepository(() => gitDiffProvider.refresh()));
   });
 
