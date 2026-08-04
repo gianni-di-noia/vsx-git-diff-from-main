@@ -2,7 +2,7 @@
   "name": "vsx-git-diff-from-main",
   "displayName": "Git Diff Sidebar",
   "description": "Shows files changed from a base branch in the sidebar",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "publisher": "dprslt",
   "license": "MIT",
   "icon": "icon.png",
@@ -54,6 +54,11 @@
         "command": "gitDiff.openDiff",
         "title": "Open Diff View",
         "icon": "$(diff)"
+      },
+      {
+        "command": "gitDiff.openTerminal",
+        "title": "Open in Integrated Terminal",
+        "icon": "$(terminal)"
       }
     ],
     "configuration": {
@@ -82,6 +87,13 @@
           "command": "gitDiff.selectRepository",
           "when": "view == gitDiffSidebar",
           "group": "navigation"
+        }
+      ],
+      "scm/repository": [
+        {
+          "command": "gitDiff.openTerminal",
+          "when": "scmProvider == git",
+          "group": "1_modification"
         }
       ],
       "view/item/context": [
