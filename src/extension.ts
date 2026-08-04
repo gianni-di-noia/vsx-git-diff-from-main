@@ -40,6 +40,26 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(openFileCommand);
 
+  // Open an integrated terminal at a repository's root. The argument is the
+  // SourceControl object VS Code passes from the "Repositories" view context
+  // menu (scm/repository), which exposes the repository rootUri.
+  const openTerminalCommand = vscode.commands.registerCommand(
+    'gitDiff.openTerminal',
+    async (sourceControl?: { rootUri?: vscode.Uri }) => {
+      const cwd = sourceControl?.rootUri?.fsPath;
+      if (!cwd) {
+        vscode.window.showErrorMessage('Git Diff Sidebar: could not resolve repository path');
+        return;
+      }
+      const terminal = vscode.window.createTerminal({
+        name: path.basename(cwd),
+        cwd
+      });
+      terminal.show();
+    }
+  );
+  context.subscriptions.push(openTerminalCommand);
+
   // Create the tree data provider
   Logger.log('Creating tree data provider...');
   const gitDiffProvider = new GitDiffProvider(context);
